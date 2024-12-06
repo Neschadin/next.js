@@ -1663,7 +1663,7 @@ export async function getStackFramesContent(browser) {
         const source = sourceEl ? await sourceEl.innerText() : ''
 
         if (!functionName) {
-          return ''
+          return source ? `at ${source}` : ''
         }
         return `at ${functionName} (${source})`
       })
