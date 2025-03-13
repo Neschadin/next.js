@@ -961,7 +961,7 @@ describe('ReactRefreshLogBox app', () => {
            |           ^",
          "stack": [
            "{default export} index.js (3:11)",
-           "Page app/page.js (2:1)",
+           "Page app/page.js (4:10)",
          ],
        }
       `)
