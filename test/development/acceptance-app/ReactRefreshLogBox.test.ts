@@ -960,6 +960,9 @@ describe('ReactRefreshLogBox app', () => {
            |           ^",
          "stack": [
            "{default export} index.js (3:11)",
+           "Set.forEach <anonymous> (0:0)",
+           "<FIXME-file-protocol>",
+           "<FIXME-file-protocol>",
            "Page app/page.js (2:1)",
          ],
        }
