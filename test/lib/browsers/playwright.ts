@@ -294,12 +294,16 @@ export class Playwright<TCurrent = any> {
   }
 
   private _pageState: PageState | null = null
+  private state: 'uninitialized' | 'loading' | 'ready' | 'closing' | 'closed' =
+    'uninitialized'
+
+  isClosed() {
+    return this.state === 'closed'
+  }
 
   private getReadyState(): PageState {
-    if (this._pageState === null) {
-      throw new Error('No page available')
-    }
-    return this._pageState
+    this.assertReady()
+    return this._pageState!
   }
 
   private currentPage(): Page {
@@ -307,9 +311,15 @@ export class Playwright<TCurrent = any> {
     return state.page
   }
 
-  private eventCallbacks: Record<EventType, Set<(...args: any[]) => void>> = {
-    request: new Set(),
-    response: new Set(),
+  private assertReady() {
+    if (this.state !== 'ready') {
+      throw new Error('Cannot call method while playwright is ' + this.state)
+    }
+    if (!this._pageState) {
+      throw new Error(
+        'Invariant: page state is unset despite being in a ready state'
+      )
+    }
   }
 
   on(
@@ -321,14 +331,13 @@ export class Playwright<TCurrent = any> {
     cb: (request: PlaywrightResponse) => void | Promise<void>
   ): void
   on(event: EventType, cb: (...args: any[]) => void) {
-    if (!this.eventCallbacks[event]) {
-      throw new Error(
-        `Invalid event passed to browser.on, received ${event}. Valid events are ${Object.keys(
-          this.eventCallbacks
-        )}`
-      )
-    }
-    this.eventCallbacks[event]?.add(cb)
+    this.assertReady()
+    const { context } = this.sharedState
+    context.on(
+      // @ts-expect-error `context.on` is an overloaded function https://github.com/microsoft/TypeScript/issues/14107
+      event,
+      cb
+    )
   }
 
   off(
@@ -340,15 +349,32 @@ export class Playwright<TCurrent = any> {
     cb: (request: PlaywrightResponse) => void | Promise<void>
   ): void
   off(event: EventType, cb: (...args: any[]) => void) {
-    this.eventCallbacks[event]?.delete(cb)
+    this.assertReady()
+    const { context } = this.sharedState
+    context.off(
+      // @ts-expect-error `context.on` is an overloaded function https://github.com/microsoft/TypeScript/issues/14107
+      event,
+      cb
+    )
   }
 
   async close(): Promise<void> {
-    if (!this._pageState) {
+    if (this.state === 'uninitialized') {
+      // Somehow, we got closed before we were initialized.
+      return
+    } else if (this.state === 'loading') {
+      throw new Error('Cannot close Playwright while it is still loading')
+    } else if (this.state === 'closing' || this.state === 'closed') {
+      console.error('Playwright is already ' + this.state)
       return
     }
+
+    this.state = 'closing'
+
     await this.sharedState.endTrace()
     await this.reset()
+
+    this.state = 'closed'
   }
 
   async reset() {
@@ -357,6 +383,7 @@ export class Playwright<TCurrent = any> {
     }
     this._pageState = null
     await closeBrowserContextPages(this.sharedState.context)
+    this.state = 'uninitialized'
   }
 
   async get(url: string): Promise<void> {
@@ -375,7 +402,7 @@ export class Playwright<TCurrent = any> {
       retryWaitHydration?: boolean
     }
   ) {
-    if (this._pageState) {
+    if (this.state !== 'uninitialized') {
       // loadPage may be called multiple times within a single test.
       // in that case, we need to reset.
       await this.reset()
@@ -384,6 +411,8 @@ export class Playwright<TCurrent = any> {
       // otherwise, we should already have a trace running.
       await this.sharedState.startTrace(url)
     }
+
+    this.state = 'loading'
 
     const { context } = this.sharedState
 
@@ -414,12 +443,6 @@ export class Playwright<TCurrent = any> {
             args: [],
           })
         }
-      })
-      page.on('request', (req) => {
-        this.eventCallbacks.request.forEach((cb) => cb(req))
-      })
-      page.on('response', (res) => {
-        this.eventCallbacks.response.forEach((cb) => cb(res))
       })
 
       if (opts?.disableCache) {
@@ -471,6 +494,7 @@ export class Playwright<TCurrent = any> {
     await setupPage(newPageState)
     this._pageState = newPageState
 
+    this.state = 'ready'
     await newPageState.page.goto(url, { waitUntil: 'load' })
 
     const waitHydration = opts?.waitHydration ?? true
@@ -555,6 +579,7 @@ export class Playwright<TCurrent = any> {
     return this.chain(() => page.setViewportSize({ width, height }))
   }
   addCookie(opts: { name: string; value: string }) {
+    this.assertReady()
     const { context } = this.sharedState
     const page = this.currentPage()
     return this.chain(async () =>
@@ -568,6 +593,7 @@ export class Playwright<TCurrent = any> {
     )
   }
   deleteCookies() {
+    this.assertReady()
     const { context } = this.sharedState
     return this.chain(async () => context.clearCookies())
   }
@@ -579,7 +605,8 @@ export class Playwright<TCurrent = any> {
 
   private wrapElement(el: ElementHandle, selector: string): ElementHandleExt {
     const page = this.currentPage()
-    function getComputedCss(prop: string) {
+    const getComputedCss = (prop: string) => {
+      this.assertReady()
       return page.evaluate(
         function (args) {
           const style = getComputedStyle(document.querySelector(args.selector))
@@ -794,9 +821,13 @@ export class Playwright<TCurrent = any> {
     this: Playwright<TCurrent>,
     nextCall: (current: TCurrent) => TNext | Promise<TNext>
   ): Playwright<TNext> & Promise<TNext> {
+    this.assertReady()
     const syncError = new Error('next-browser-base-chain-error')
     const promise = Promise.resolve(this.promise)
-      .then(nextCall)
+      .then((current) => {
+        this.assertReady()
+        return nextCall(current)
+      })
       .catch((reason) => {
         if (
           reason !== null &&
