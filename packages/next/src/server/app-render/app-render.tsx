@@ -500,13 +500,6 @@ async function generateDynamicRSCPayload(
       serveStreamingMetadata,
     })
 
-    // const { StreamingMetadata, StaticMetadata } =
-    //   createRootMetadata(() => {
-    //     return (
-
-    //     )
-    //   }, serveStreamingMetadata)
-
     flightData = (
       await walkTreeWithFlightRouterState({
         ctx,
