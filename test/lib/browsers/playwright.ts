@@ -113,15 +113,17 @@ export class SharedPlaywrightState {
     return context
   }
 
-  async update(options: BrowserContextOptions) {
-    let contextOptionChanged = false
-    for (const [key, value] of Object.entries(options)) {
-      if (this.contextOptions[key] !== value) {
-        contextOptionChanged = true
-      }
-    }
+  async canUpdateAndReuse(browserOptions: BrowserOptions) {
+    // if a browser configuration option changed, we have to recreate the whole state.
+    return !SharedPlaywrightState.optionChanged(
+      browserOptions,
+      this.browserOptions
+    )
+  }
 
-    if (contextOptionChanged) {
+  async update(options: BrowserContextOptions) {
+    // if a browser context configuration option changed, we have to recreate the context.
+    if (SharedPlaywrightState.optionChanged(options, this.contextOptions)) {
       await this.closeContext()
 
       this.context = await SharedPlaywrightState.createBrowserContext(
@@ -130,6 +132,18 @@ export class SharedPlaywrightState {
         this.tracingEnabled()
       )
     }
+  }
+
+  private static optionChanged<T extends Record<string, any>>(
+    prev: T,
+    current: T
+  ): boolean {
+    for (const [key, value] of Object.entries(prev)) {
+      if (current[key] !== value) {
+        return true
+      }
+    }
+    return false
   }
 
   async destroy() {
